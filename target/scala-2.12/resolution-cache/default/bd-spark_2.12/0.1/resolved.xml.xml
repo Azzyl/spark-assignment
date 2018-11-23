@@ -4,7 +4,7 @@
 		module="bd-spark_2.12"
 		revision="0.1"
 		status="integration"
-		publication="20181123164128"
+		publication="20181123171811"
 	>
 		<description>
 		bd-spark
@@ -32,5 +32,6 @@
 	<dependencies>
 		<dependency org="org.scala-lang" name="scala-compiler" rev="2.12.7" conf="scala-tool->default,optional(default)"/>
 		<dependency org="org.scala-lang" name="scala-library" rev="2.12.7" conf="scala-tool->default,optional(default);compile->default(compile)"/>
+		<dependency org="com.github.catalystcode" name="streaming-rss-html_2.11" rev="1.0.2" conf="compile->default(compile)"/>
 	</dependencies>
 </ivy-module>

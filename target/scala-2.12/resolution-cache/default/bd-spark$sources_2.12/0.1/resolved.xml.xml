@@ -4,7 +4,7 @@
 		module="bd-spark$sources_2.12"
 		revision="0.1"
 		status="integration"
-		publication="20181123164128"
+		publication="20181123172001"
 	/>
 	<configurations>
 		<conf name="default" visibility="public" description=""/>
