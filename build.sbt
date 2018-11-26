@@ -16,7 +16,8 @@ libraryDependencies ++= Seq(
   "com.github.catalystcode" %% "streaming-rss-html" % "1.0.2",
   "org.apache.spark" %% "spark-core" % "2.2.0",
   "org.apache.spark" %% "spark-sql" % "2.2.0",
-  "org.apache.spark" %% "spark-streaming" % "2.2.0"
+  "org.apache.spark" %% "spark-streaming" % "2.2.0",
+  "org.apache.spark" %% "spark-mllib" % "2.2.0"
 ).map(_ % "compile")
 
 libraryDependencies ++= Seq(

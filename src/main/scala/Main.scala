@@ -3,6 +3,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.ml.classification.LogisticRegression
 
 object RSSDemo {
   def main(args: Array[String]) {
@@ -17,6 +18,8 @@ object RSSDemo {
     val stream = new RSSInputDStream(urls, Map[String, String](
       "User-Agent" -> "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"
     ), ssc, StorageLevel.MEMORY_ONLY, pollingPeriodInSeconds = durationSeconds)
+    val lr = new LogisticRegression()
+//    var model1 = lr.fit()
     stream.foreachRDD(rdd => {
       val spark = SparkSession.builder().appName(sc.appName).getOrCreate()
       import spark.sqlContext.implicits._
@@ -24,7 +27,8 @@ object RSSDemo {
       rdd.foreach(tweet => {
         println(tweet.uri)
         println(tweet.title)
-        println(tweet.content)
+        tweet.content.foreach(rssContent => println(rssContent.value))
+        println(tweet.content.length)
       })
     })
 
