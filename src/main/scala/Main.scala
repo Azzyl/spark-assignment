@@ -1,6 +1,6 @@
 import com.github.catalystcode.fortis.spark.streaming.rss._
 import org.apache.spark.ml.Pipeline
-import org.apache.spark.sql.{SparkSession, functions}
+import org.apache.spark.sql.{SaveMode, SparkSession, functions}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
@@ -25,12 +25,11 @@ object RSSDemo {
     val spark = SparkSession.builder().appName(sc.appName).getOrCreate()
     import spark.sqlContext.implicits._
     val sqlContext = new org.apache.spark.sql.SQLContext(sc)
-    val tweets = sqlContext.read.format("com.databricks.spark.csv")
+    val trainTweets = sqlContext.read.format("com.databricks.spark.csv")
       .option("header", "true")
       .option("inferSchema", "true")
       .load("train.csv").as[TrainingTweet]
       .withColumn("text", functions.lower(functions.col("text")))
-//      .select("ItemId", "SentimentText", "Sentiment")
     val tokenizer = new Tokenizer()
       .setInputCol("text")
       .setOutputCol("words")
@@ -43,17 +42,25 @@ object RSSDemo {
       .setRegParam(0.001)
     val pipeline = new Pipeline()
       .setStages(Array(tokenizer, hashingTF, lr))
-    tweets.printSchema()
-    val model = pipeline.fit(tweets)
+    trainTweets.printSchema()
+    val model = pipeline.fit(trainTweets.withColumn("text", functions.regexp_replace(
+      functions.col("text"),
+      """[\p{Punct}&&[^.]]""", "")))
     stream.foreachRDD(rdd => {
-      val columnName = "title"
-      val tweets = rdd.toDS()
-        .select("uri", "title")
-        .withColumn(columnName, functions.lower(functions.col(columnName)))
-        .withColumn("id", functions.monotonically_increasing_id())
-        .withColumn("text", functions.col("title"))
-      val result = model.transform(tweets).select("uri", "probability", "prediction")
-      result.show()
+      if (!rdd.isEmpty()) {
+        val tweets = rdd.toDS()
+          .select("uri", "title")
+          .withColumn("title", functions.lower(functions.col("title")))
+          .withColumn("id", functions.monotonically_increasing_id())
+          .withColumn("text", functions.col("title"))
+        val result = model.transform(tweets
+          .withColumn("text", functions.regexp_replace(
+            functions.col("text"),
+            """[\p{Punct}&&[^.]]""", "")))
+          .select("uri", "prediction")
+        result.show()
+        result.toDF().write.mode(SaveMode.Append).save("output")
+      }
     })
 
     // run forever
