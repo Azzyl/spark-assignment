@@ -6,59 +6,117 @@ import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.ml.classification.LogisticRegression
 import org.apache.spark.ml.feature.{HashingTF, Tokenizer}
+import org.apache.spark.ml.classification.LinearSVC
 
 
-case class TrainingTweet(id: Long, label: Integer, text: String)
+case class TrainingTweet(tweetId: Long, label: Integer, tweetContent: String)
 
 object RSSDemo {
-  def main(args: Array[String]) {
-    val durationSeconds = 10
-    val conf = new SparkConf().setAppName("RSS Spark Application").setIfMissing("spark.master", "local[*]")
-    val sc = new SparkContext(conf)
-    val ssc = new StreamingContext(sc, Seconds(durationSeconds))
+
+  val durationSeconds = 10 //update time
+
+  var conf :SparkConf = _
+  var sc  :SparkContext = _
+  var ssc :StreamingContext = _
+  var urlCSV :String = _ //our RSS link
+
+  def init(): Unit ={
+    conf = new SparkConf().setAppName("RSS Spark Application").setIfMissing("spark.master", "local[*]")
+    sc = new SparkContext(conf)
+    ssc = new StreamingContext(sc, Seconds(durationSeconds))
     sc.setLogLevel("ERROR")
-    val urlCSV = args(0)
-    val urls = urlCSV.split(",")
-    val stream = new RSSInputDStream(urls, Map[String, String](
+  }
+  def setRssUrl (url :String): Unit ={
+    urlCSV = url
+  }
+  def getUrls(): Array[String] ={
+    urlCSV.split(",")
+  }
+  def RSSToRDD(rssUrl :Array[String]): RSSInputDStream ={
+    new RSSInputDStream(rssUrl, Map[String, String](
       "User-Agent" -> "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"
     ), ssc, StorageLevel.MEMORY_ONLY, pollingPeriodInSeconds = durationSeconds)
-    val spark = SparkSession.builder().appName(sc.appName).getOrCreate()
+
+  }
+
+  def getLogisticRegression(): LogisticRegression ={
+      new LogisticRegression().setMaxIter(10)
+        .setRegParam(0.01)
+  }
+
+  def getSVM(): LinearSVC ={
+    new LinearSVC()
+      .setMaxIter(10)
+  }
+
+  def main(args: Array[String]) {
+
+    init()
+    val testUrl = "https://queryfeed.net/twitter?q=putin&title-type=user-name-both&order-by=recent&geocode="
+    setRssUrl(args(0))
+
+    val urls = getUrls() //get url of each twit
+
+    val stream = RSSToRDD(urls) // RSS TO RDD
+
+    val spark = SparkSession.builder().appName(sc.appName).getOrCreate() //create spark
     import spark.sqlContext.implicits._
     val sqlContext = new org.apache.spark.sql.SQLContext(sc)
-    val trainTweets = sqlContext.read.format("com.databricks.spark.csv")
+
+
+    val trainTweets = sqlContext.read.format("com.databricks.spark.csv") //train tweets for model to learn
       .option("header", "true")
       .option("inferSchema", "true")
-      .load("train.csv").as[TrainingTweet]
-      .withColumn("text", functions.lower(functions.col("text")))
+      .load("train.csv").as[TrainingTweet] //adding train.csv
+      .withColumn("tweetContent", functions.lower(functions.col("tweetContent")))
+
+
     val tokenizer = new Tokenizer()
-      .setInputCol("text")
+      .setInputCol("tweetContent")
       .setOutputCol("words")
+
     val hashingTF = new HashingTF()
       .setNumFeatures(10000)
       .setInputCol(tokenizer.getOutputCol)
       .setOutputCol("features")
-    val lr = new LogisticRegression()
-      .setMaxIter(10)
-      .setRegParam(0.001)
+
+    val regression = getLogisticRegression() //
+
     val pipeline = new Pipeline()
-      .setStages(Array(tokenizer, hashingTF, lr))
-    trainTweets.printSchema()
-    val model = pipeline.fit(trainTweets.withColumn("text", functions.regexp_replace(
-      functions.col("text"),
+      .setStages(
+        Array(
+          tokenizer,   // 1) tokenize
+          hashingTF,   // 2) hashing
+          regression)) // 3) making regression
+
+    //fitting model with preprocessing data
+    val model = pipeline.fit(
+      trainTweets.withColumn("tweetContent", functions.regexp_replace(
+      functions.col("tweetContent"),
       """[\p{Punct}&&[^.]]""", "")))
-    stream.foreachRDD(rdd => {
+
+    stream.foreachRDD(rdd => { //creating stream to get tweets
       if (!rdd.isEmpty()) {
+
+        //from RDD to DS
         val tweets = rdd.toDS()
           .select("uri", "title")
           .withColumn("title", functions.lower(functions.col("title")))
-          .withColumn("id", functions.monotonically_increasing_id())
-          .withColumn("text", functions.col("title"))
+          .withColumn("tweetId", functions.monotonically_increasing_id())
+          .withColumn("tweetContent", functions.col("title"))
+
+        //predict for DS
         val result = model.transform(tweets
-          .withColumn("text", functions.regexp_replace(
-            functions.col("text"),
+          .withColumn("tweetContent", functions.regexp_replace(
+            functions.col("tweetContent"),
             """[\p{Punct}&&[^.]]""", "")))
-          .select("uri", "prediction")
-        result.show()
+          .select("uri", "prediction", "probability")
+
+        //printing result
+        print(result.show())
+
+
+        //save results to file
         result.toDF().write.mode(SaveMode.Append).save("output")
       }
     })
