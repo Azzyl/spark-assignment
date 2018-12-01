@@ -5,15 +5,16 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.ml.classification.LogisticRegression
-import org.apache.spark.ml.feature.{HashingTF, Tokenizer}
+import org.apache.spark.ml.feature.{HashingTF, Normalizer, Tokenizer}
 import org.apache.spark.ml.classification.LinearSVC
+import org.apache.spark.ml.evaluation.RegressionEvaluator
 
 
 case class TrainingTweet(tweetId: Long, label: Integer, tweetContent: String)
 
 object RSSDemo {
 
-  val durationSeconds = 10 //update time
+  val durationSeconds = 60 //update time
 
   var conf :SparkConf = _
   var sc  :SparkContext = _
@@ -40,13 +41,19 @@ object RSSDemo {
   }
 
   def getLogisticRegression(): LogisticRegression ={
-      new LogisticRegression().setMaxIter(10)
+      new LogisticRegression()
+        .setMaxIter(100)
         .setRegParam(0.01)
+        .setElasticNetParam(0.5)
   }
 
   def getSVM(): LinearSVC ={
     new LinearSVC()
       .setMaxIter(10)
+  }
+
+  def normalizeData(): Unit ={
+
   }
 
   def main(args: Array[String]) {
@@ -57,14 +64,14 @@ object RSSDemo {
 
     val urls = getUrls() //get url of each twit
 
-    val stream = RSSToRDD(urls) // RSS TO RDD
+    val tweetsFromRSS = RSSToRDD(urls) // RSS TO RDD
 
     val spark = SparkSession.builder().appName(sc.appName).getOrCreate() //create spark
     import spark.sqlContext.implicits._
     val sqlContext = new org.apache.spark.sql.SQLContext(sc)
 
 
-    val trainTweets = sqlContext.read.format("com.databricks.spark.csv") //train tweets for model to learn
+    var trainTweets = sqlContext.read.format("com.databricks.spark.csv") //train tweets for model to learn
       .option("header", "true")
       .option("inferSchema", "true")
       .load("train.csv").as[TrainingTweet] //adding train.csv
@@ -82,6 +89,7 @@ object RSSDemo {
 
     val regression = getLogisticRegression() //
 
+
     val pipeline = new Pipeline()
       .setStages(
         Array(
@@ -89,13 +97,26 @@ object RSSDemo {
           hashingTF,   // 2) hashing
           regression)) // 3) making regression
 
-    //fitting model with preprocessing data
-    val model = pipeline.fit(
-      trainTweets.withColumn("tweetContent", functions.regexp_replace(
-      functions.col("tweetContent"),
-      """[\p{Punct}&&[^.]]""", "")))
 
-    stream.foreachRDD(rdd => { //creating stream to get tweets
+    print(trainTweets.show())
+    trainTweets = trainTweets
+                .withColumn("tweetContent", functions.regexp_replace(
+                     functions.col("tweetContent"),
+                """[\p{Punct}&&[^.]]""", ""))
+
+
+    //fitting model with preprocessing data
+    val model = pipeline.fit(trainTweets)
+
+
+    val labelColumn = "label"
+    val evaluator = new RegressionEvaluator()
+      .setLabelCol(labelColumn)
+      .setPredictionCol(labelColumn)
+      .setMetricName("rmse")
+
+
+    tweetsFromRSS.foreachRDD(rdd => { //creating stream to get tweets
       if (!rdd.isEmpty()) {
 
         //from RDD to DS
@@ -111,6 +132,8 @@ object RSSDemo {
             functions.col("tweetContent"),
             """[\p{Punct}&&[^.]]""", "")))
           .select("uri", "prediction", "probability")
+
+
 
         //printing result
         print(result.show())
