@@ -36,7 +36,7 @@ object RSSDemo {
   def RSSToRDD(rssUrl :Array[String]): RSSInputDStream ={
     new RSSInputDStream(rssUrl, Map[String, String](
       "User-Agent" -> "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"
-    ), ssc, StorageLevel.MEMORY_ONLY, pollingPeriodInSeconds = durationSeconds)
+    ), ssc, StorageLevel.MEMORY_ONLY, connectTimeout = 60000, pollingPeriodInSeconds = durationSeconds)
 
   }
 
@@ -59,8 +59,8 @@ object RSSDemo {
   def main(args: Array[String]) {
 
     init()
-    val testUrl = "https://queryfeed.net/twitter?q=putin&title-type=user-name-both&order-by=recent&geocode="
-    setRssUrl(args(0))
+    urlCSV = "https://queryfeed.net/twitter?q=putin&title-type=user-name-both&order-by=recent&geocode="
+    if (args.length > 0) setRssUrl(args(0))
 
     val urls = getUrls() //get url of each twit
 
