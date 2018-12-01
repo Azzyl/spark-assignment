@@ -7,7 +7,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.ml.classification.LogisticRegression
 import org.apache.spark.ml.feature.{HashingTF, Normalizer, Tokenizer}
 import org.apache.spark.ml.classification.LinearSVC
-import org.apache.spark.ml.evaluation.RegressionEvaluator
+import org.apache.spark.ml.evaluation.{MulticlassClassificationEvaluator, RegressionEvaluator}
 
 
 case class TrainingTweet(tweetId: Long, label: Integer, tweetContent: String)
@@ -42,9 +42,8 @@ object RSSDemo {
 
   def getLogisticRegression(): LogisticRegression ={
       new LogisticRegression()
-        .setMaxIter(100)
+        .setMaxIter(10)
         .setRegParam(0.01)
-        .setElasticNetParam(0.5)
   }
 
   def getSVM(): LinearSVC ={
@@ -87,60 +86,76 @@ object RSSDemo {
       .setInputCol(tokenizer.getOutputCol)
       .setOutputCol("features")
 
-    val regression = getLogisticRegression() //
+    val regression1 = getSVM() //
+    val regression2 = getLogisticRegression()
 
-
-    val pipeline = new Pipeline()
+    val pipeline1 = new Pipeline()
       .setStages(
         Array(
           tokenizer,   // 1) tokenize
           hashingTF,   // 2) hashing
-          regression)) // 3) making regression
+          regression1)) // 3) making regression
+
+    val pipeline2 = new Pipeline()
+      .setStages(
+        Array(
+          tokenizer,   // 1) tokenize
+          hashingTF,   // 2) hashing
+          regression2)) // 3) making regression
 
 
-    print(trainTweets.show())
     trainTweets = trainTweets
                 .withColumn("tweetContent", functions.regexp_replace(
                      functions.col("tweetContent"),
                 """[\p{Punct}&&[^.]]""", ""))
 
+    val Array(trainingData, testData) = trainTweets.randomSplit(Array(0.7, 0.3))
 
     //fitting model with preprocessing data
-    val model = pipeline.fit(trainTweets)
+    val model1 = pipeline1.fit(trainingData)
+    val predictions1 = model1.transform(testData)
+
+    val model2 = pipeline2.fit(trainingData)
+    val predictions2 = model2.transform(testData)
 
 
-    val labelColumn = "label"
-    val evaluator = new RegressionEvaluator()
-      .setLabelCol(labelColumn)
-      .setPredictionCol(labelColumn)
-      .setMetricName("rmse")
+    val evaluator = new MulticlassClassificationEvaluator()
+      .setLabelCol("label")
+      .setPredictionCol("prediction")
+      .setMetricName("accuracy")
 
+    val accuracy1 = evaluator.evaluate(predictions1)
+    val accuracy2 = evaluator.evaluate(predictions2)
+    var finalModel = model2
+    if(accuracy1<accuracy2) {finalModel = model1}
+
+    println("Test Error in SVM = " + (1.0 - accuracy1))
+    println("Test Error in Logistic Regression = " + (1.0 - accuracy2))
 
     tweetsFromRSS.foreachRDD(rdd => { //creating stream to get tweets
       if (!rdd.isEmpty()) {
 
         //from RDD to DS
-        val tweets = rdd.toDS()
+        var tweets = rdd.toDS()
           .select("uri", "title")
           .withColumn("title", functions.lower(functions.col("title")))
           .withColumn("tweetId", functions.monotonically_increasing_id())
           .withColumn("tweetContent", functions.col("title"))
 
+        tweets = tweets.withColumn("tweetContent",
+          functions.regexp_replace(functions.col("tweetContent"),
+            """[\p{Punct}&&[^.]]""", ""))
+
         //predict for DS
-        val result = model.transform(tweets
-          .withColumn("tweetContent", functions.regexp_replace(
-            functions.col("tweetContent"),
-            """[\p{Punct}&&[^.]]""", "")))
-          .select("uri", "prediction", "probability")
-
-
+        val predictions = finalModel.transform(tweets)
+          .select("title", "prediction", "probability")
 
         //printing result
-        print(result.show())
+        print(predictions.show() + " hello")
 
 
         //save results to file
-        result.toDF().write.mode(SaveMode.Append).save("output")
+        predictions.toDF().write.mode(SaveMode.Append).save("output")
       }
     })
 
